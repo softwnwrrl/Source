@@ -1,0 +1,317 @@
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
+if not WindUI then
+    game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Error", Text = "WindUI failed to load", Duration = 5})
+    return
+end
+
+local player = game.Players.LocalPlayer
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local espEnabled = false
+local espObjects = {}
+
+-- Colors
+local COLORS = {
+    Murderer = Color3.fromRGB(255, 0, 0),     -- Red
+    Sheriff = Color3.fromRGB(0, 0, 255),      -- Blue
+    Innocent = Color3.fromRGB(0, 255, 0),     -- Green
+    Hero = Color3.fromRGB(255, 255, 0)        -- Yellow
+}
+
+-- Get role for a player
+local function getPlayerRole(plr)
+    if plr == player then return nil end
+    
+    -- Check attribute
+    local role = plr:GetAttribute("Role")
+    if role and role ~= "" then
+        if role == "Murderer" then return "Murderer"
+        elseif role == "Sheriff" then return "Sheriff"
+        elseif role == "Innocent" then return "Innocent"
+        end
+    end
+    
+    -- Check team
+    if plr.Team then
+        local teamName = plr.Team.Name
+        if teamName == "Murderers" then return "Murderer"
+        elseif teamName == "Sheriffs" then return "Sheriff"
+        elseif teamName == "Innocents" then return "Innocent"
+        end
+    end
+    
+    -- Check if has gun -> Hero (Innocent with gun)
+    local char = plr.Character
+    if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 then
+        local tool = char:FindFirstChildOfClass("Tool")
+        if tool and (tool.Name:lower():find("gun") or tool:FindFirstChild("GunServer")) then
+            return "Hero"
+        end
+    end
+    
+    return "Innocent"
+end
+
+-- Get color by role
+local function getRoleColor(role)
+    if role == "Murderer" then return COLORS.Murderer
+    elseif role == "Sheriff" then return COLORS.Sheriff
+    elseif role == "Hero" then return COLORS.Hero
+    else return COLORS.Innocent
+    end
+end
+
+-- Add ESP for a player
+local function addESP(plr)
+    if not espEnabled then return end
+    if plr == player then return end
+    if espObjects[plr] then return end
+    
+    local char = plr.Character
+    if not char then return end
+    
+    local hum = char:FindFirstChild("Humanoid")
+    if not hum or hum.Health <= 0 then return end
+    
+    local rootPart = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+    if not rootPart then return end
+    
+    local role = getPlayerRole(plr)
+    local color = getRoleColor(role)
+    
+    -- Billboard with name
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "ESP_Billboard"
+    billboard.Size = UDim2.new(0, 150, 0, 40)
+    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Parent = rootPart
+    
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Size = UDim2.new(1, 0, 1, 0)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.TextColor3 = color
+    nameLabel.TextStrokeTransparency = 0
+    nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    nameLabel.TextScaled = true
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.Text = plr.Name
+    nameLabel.Parent = billboard
+    
+    -- Highlight
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "ESP_Highlight"
+    highlight.FillColor = color
+    highlight.OutlineColor = color
+    highlight.FillTransparency = 0.6
+    highlight.OutlineTransparency = 0.4
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = char
+    
+    espObjects[plr] = {
+        billboard = billboard,
+        highlight = highlight,
+        character = char,
+        rootPart = rootPart,
+        currentRole = role
+    }
+end
+
+-- Remove ESP for a player
+local function removeESP(plr)
+    local data = espObjects[plr]
+    if data then
+        if data.billboard then data.billboard:Destroy() end
+        if data.highlight then data.highlight:Destroy() end
+        espObjects[plr] = nil
+    end
+end
+
+-- Update single player's ESP color
+local function updateESPColor(plr)
+    local data = espObjects[plr]
+    if not data then return end
+    
+    local newRole = getPlayerRole(plr)
+    local newColor = getRoleColor(newRole)
+    
+    if data.currentRole ~= newRole then
+        data.currentRole = newRole
+        if data.highlight then
+            data.highlight.FillColor = newColor
+            data.highlight.OutlineColor = newColor
+        end
+        if data.billboard then
+            local label = data.billboard:FindFirstChildOfClass("TextLabel")
+            if label then
+                label.TextColor3 = newColor
+            end
+        end
+    end
+end
+
+-- Refresh all ESP (clear and rebuild)
+local function refreshAllESP()
+    for plr in pairs(espObjects) do
+        removeESP(plr)
+    end
+    
+    if not espEnabled then return end
+    
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player then
+            addESP(plr)
+        end
+    end
+end
+
+-- Update all ESP colors (efficient, doesn't rebuild)
+local function updateAllESPColors()
+    for plr in pairs(espObjects) do
+        updateESPColor(plr)
+    end
+end
+
+-- ============ AUTO-UPDATE EVENTS ============
+
+-- Watch for role attribute changes
+local function watchRoleChanges(plr)
+    if plr == player then return end
+    plr:GetAttributeChangedSignal("Role"):Connect(function()
+        updateESPColor(plr)
+    end)
+end
+
+-- Watch for gun pickup (Hero detection)
+local function watchToolChanges(plr)
+    if plr == player then return end
+    
+    local char = plr.Character
+    if not char then return end
+    
+    local function onToolAdded(tool)
+        if tool:IsA("Tool") and (tool.Name:lower():find("gun") or tool:FindFirstChild("GunServer")) then
+            task.wait(0.1)
+            updateESPColor(plr)
+        end
+    end
+    
+    local function onToolRemoved(tool)
+        if tool:IsA("Tool") and (tool.Name:lower():find("gun") or tool:FindFirstChild("GunServer")) then
+            task.wait(0.1)
+            updateESPColor(plr)
+        end
+    end
+    
+    char.ChildAdded:Connect(onToolAdded)
+    char.ChildRemoved:Connect(onToolRemoved)
+end
+
+-- Watch for character respawn
+local function setupPlayerTracking(plr)
+    if plr == player then return end
+    
+    -- Initial add
+    task.wait(0.5)
+    if espEnabled and plr.Character and plr.Character:FindFirstChild("Humanoid") then
+        addESP(plr)
+    end
+    
+    -- Watch for respawn
+    plr.CharacterAdded:Connect(function(char)
+        task.wait(0.5)
+        if espEnabled then
+            -- Remove old and add new
+            removeESP(plr)
+            addESP(plr)
+        end
+        watchToolChanges(plr)
+    end)
+    
+    -- Watch role changes
+    watchRoleChanges(plr)
+    
+    -- Watch tool changes on current character
+    watchToolChanges(plr)
+end
+
+-- Track all players
+for _, plr in ipairs(Players:GetPlayers()) do
+    setupPlayerTracking(plr)
+end
+
+Players.PlayerAdded:Connect(function(plr)
+    setupPlayerTracking(plr)
+end)
+
+Players.PlayerRemoving:Connect(function(plr)
+    removeESP(plr)
+end)
+
+-- Watch for round start (when roles are assigned)
+local function onRoundStart()
+    task.wait(1)
+    if espEnabled then
+        refreshAllESP()
+    end
+end
+
+-- Detect round start via remotes or attribute
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local roundStartRemote = replicatedStorage:FindFirstChild("RoundStarted") or
+                         replicatedStorage:FindFirstChild("StartRound") or
+                         replicatedStorage:FindFirstChild("RoundStart")
+
+if roundStartRemote then
+    roundStartRemote.OnClientEvent:Connect(onRoundStart)
+end
+
+player:GetAttributeChangedSignal("Role"):Connect(function()
+    if player:GetAttribute("Role") and player:GetAttribute("Role") ~= "" then
+        onRoundStart()
+    end
+end)
+
+-- Periodic check for role changes (every 1 second, lightweight)
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if espEnabled then
+            updateAllESPColors()
+        end
+    end
+end)
+
+-- ============ WINDUI MENU ============
+local Window = WindUI:CreateWindow({
+    Title = "MM2 ESP",
+    Author = "",
+    Folder = "mm2_esp",
+    Size = UDim2.fromOffset(350, 200),
+    Theme = "Dark"
+})
+
+local MainTab = Window:Tab({Title = "Main"})
+
+MainTab:Toggle({
+    Title = "ESP Enabled",
+    Description = "Murderer = Red | Sheriff = Blue | Innocent = Green",
+    Default = false,
+    Callback = function(v)
+        espEnabled = v
+        if v then
+            refreshAllESP()
+            WindUI:Notify({Title = "ESP", Content = "ON", Duration = 2})
+        else
+            for plr in pairs(espObjects) do
+                removeESP(plr)
+            end
+            WindUI:Notify({Title = "ESP", Content = "OFF", Duration = 1})
+        end
+    end
+})
+
+print("MM2 ESP loaded | Colors: Murderer=Red, Sheriff=Blue, Innocent=Green, Hero=Yellow")
+WindUI:Notify({Title = "Ready", Content = "Enable ESP | Auto-updates", Duration = 3})
