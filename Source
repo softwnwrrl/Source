@@ -1,3 +1,8 @@
+-- ============================================
+-- SPEED GLITCH + MC HOLD + JB JUMP + STOP (WINDUI)
+-- STOP button: instant freeze
+-- ============================================
+
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
 if not WindUI then
@@ -6,312 +11,687 @@ if not WindUI then
 end
 
 local player = game.Players.LocalPlayer
-local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
-local espEnabled = false
-local espObjects = {}
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
 
--- Colors
-local COLORS = {
-    Murderer = Color3.fromRGB(255, 0, 0),     -- Red
-    Sheriff = Color3.fromRGB(0, 0, 255),      -- Blue
-    Innocent = Color3.fromRGB(0, 255, 0),     -- Green
-    Hero = Color3.fromRGB(255, 255, 0)        -- Yellow
-}
+-- ============ SPEED GLITCH SETTINGS ============
+local speedEnabled = false
+local speedPower = 3
+local macroRotEnabled = false
+local macroInterval = 0.01
+local lastMacroTick = 0
+local wallPush = false
+local wallPushPower = 1.2
+local forcedDirectionEnabled = false
+local forcedDirection = "Forward"
+local macroAngleMin = 80
+local macroAngleMax = 120
 
--- Get role for a player
-local function getPlayerRole(plr)
-    if plr == player then return nil end
-    
-    -- Check attribute
-    local role = plr:GetAttribute("Role")
-    if role and role ~= "" then
-        if role == "Murderer" then return "Murderer"
-        elseif role == "Sheriff" then return "Sheriff"
-        elseif role == "Innocent" then return "Innocent"
-        end
+-- ============ HOLD MACRO SPIN SETTINGS ============
+local macroSpinActive = false
+local spinConnection = nil
+local editMode = false
+local originalSpeed = 16
+local currentBoost = 0
+local boostConnection = nil
+
+-- ============ JUMP BOOST SETTINGS ============
+local jumpHeight = 50
+local jumpCooldown = 1.5
+local lastJump = 0
+
+-- ============ GUI ELEMENTS ============
+local screenGui = nil
+local mcButton = nil
+local jbButton = nil
+local stopButton = nil
+
+-- Видимость кнопок (отдельно)
+local mcVisible = true
+local jbVisible = true
+local stopVisible = true
+
+-- Сохраняем позиции кнопок
+local savedMCPos = UDim2.new(0.85, -65, 0.5, -32)        -- правый край, центр
+local savedJBPos = UDim2.new(0.85, -130, 0.5, -32)       -- левее MC
+local savedStopPos = UDim2.new(0.85, -195, 0.5, -32)     -- левее JB
+
+-- ============ DIRECTION LOGIC ============
+local function getForcedDirectionVector()
+    if not rootPart then return Vector3.zero end
+    local look = rootPart.CFrame.LookVector
+    local right = rootPart.CFrame.RightVector
+    if forcedDirection == "Forward" then return look
+    elseif forcedDirection == "Backward" then return -look
+    elseif forcedDirection == "Left" then return -right
+    elseif forcedDirection == "Right" then return right
+    elseif forcedDirection == "Forward Left" then return (look - right).Unit
+    elseif forcedDirection == "Forward Right" then return (look + right).Unit
+    elseif forcedDirection == "Backward Left" then return (-look - right).Unit
+    elseif forcedDirection == "Backward Right" then return (-look + right).Unit
     end
-    
-    -- Check team
-    if plr.Team then
-        local teamName = plr.Team.Name
-        if teamName == "Murderers" then return "Murderer"
-        elseif teamName == "Sheriffs" then return "Sheriff"
-        elseif teamName == "Innocents" then return "Innocent"
-        end
-    end
-    
-    -- Check if has gun -> Hero (Innocent with gun)
-    local char = plr.Character
-    if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 then
-        local tool = char:FindFirstChildOfClass("Tool")
-        if tool and (tool.Name:lower():find("gun") or tool:FindFirstChild("GunServer")) then
-            return "Hero"
-        end
-    end
-    
-    return "Innocent"
+    return look
 end
 
--- Get color by role
-local function getRoleColor(role)
-    if role == "Murderer" then return COLORS.Murderer
-    elseif role == "Sheriff" then return COLORS.Sheriff
-    elseif role == "Hero" then return COLORS.Hero
-    else return COLORS.Innocent
+local function getSpeedDirection()
+    if not humanoid or not rootPart then return Vector3.zero end
+    if forcedDirectionEnabled then
+        return getForcedDirectionVector()
     end
-end
-
--- Add ESP for a player
-local function addESP(plr)
-    if not espEnabled then return end
-    if plr == player then return end
-    if espObjects[plr] then return end
-    
-    local char = plr.Character
-    if not char then return end
-    
-    local hum = char:FindFirstChild("Humanoid")
-    if not hum or hum.Health <= 0 then return end
-    
-    local rootPart = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-    if not rootPart then return end
-    
-    local role = getPlayerRole(plr)
-    local color = getRoleColor(role)
-    
-    -- Billboard with name
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "ESP_Billboard"
-    billboard.Size = UDim2.new(0, 150, 0, 40)
-    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
-    billboard.AlwaysOnTop = true
-    billboard.Parent = rootPart
-    
-    local nameLabel = Instance.new("TextLabel")
-    nameLabel.Size = UDim2.new(1, 0, 1, 0)
-    nameLabel.BackgroundTransparency = 1
-    nameLabel.TextColor3 = color
-    nameLabel.TextStrokeTransparency = 0
-    nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-    nameLabel.TextScaled = true
-    nameLabel.Font = Enum.Font.GothamBold
-    nameLabel.Text = plr.Name
-    nameLabel.Parent = billboard
-    
-    -- Highlight
-    local highlight = Instance.new("Highlight")
-    highlight.Name = "ESP_Highlight"
-    highlight.FillColor = color
-    highlight.OutlineColor = color
-    highlight.FillTransparency = 0.6
-    highlight.OutlineTransparency = 0.4
-    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.Parent = char
-    
-    espObjects[plr] = {
-        billboard = billboard,
-        highlight = highlight,
-        character = char,
-        rootPart = rootPart,
-        currentRole = role
-    }
-end
-
--- Remove ESP for a player
-local function removeESP(plr)
-    local data = espObjects[plr]
-    if data then
-        if data.billboard then data.billboard:Destroy() end
-        if data.highlight then data.highlight:Destroy() end
-        espObjects[plr] = nil
+    if humanoid.MoveDirection.Magnitude > 0 then
+        return humanoid.MoveDirection.Unit
+    else
+        return Vector3.zero
     end
 end
 
--- Update single player's ESP color
-local function updateESPColor(plr)
-    local data = espObjects[plr]
-    if not data then return end
-    
-    local newRole = getPlayerRole(plr)
-    local newColor = getRoleColor(newRole)
-    
-    if data.currentRole ~= newRole then
-        data.currentRole = newRole
-        if data.highlight then
-            data.highlight.FillColor = newColor
-            data.highlight.OutlineColor = newColor
-        end
-        if data.billboard then
-            local label = data.billboard:FindFirstChildOfClass("TextLabel")
-            if label then
-                label.TextColor3 = newColor
+-- ============ SPEED GLITCH ============
+RunService.RenderStepped:Connect(function()
+    if speedEnabled and humanoid and rootPart and not macroSpinActive then
+        local state = humanoid:GetState()
+        if state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall then
+            local dir = getSpeedDirection()
+            if dir.Magnitude > 0 then
+                rootPart.AssemblyLinearVelocity += dir * speedPower
             end
         end
     end
-end
+end)
 
--- Refresh all ESP (clear and rebuild)
-local function refreshAllESP()
-    for plr in pairs(espObjects) do
-        removeESP(plr)
-    end
-    
-    if not espEnabled then return end
-    
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player then
-            addESP(plr)
+-- ============ FAKE MACRO ============
+RunService.RenderStepped:Connect(function()
+    if macroRotEnabled and humanoid and rootPart and not macroSpinActive then
+        if not speedEnabled then
+            macroRotEnabled = false
+            humanoid.AutoRotate = true
+            WindUI:Notify({Title = "Error", Content = "Enable Speed Glitch first", Duration = 2})
+            return
+        end
+        local state = humanoid:GetState()
+        if state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall then
+            humanoid.AutoRotate = false
+            if tick() - lastMacroTick > macroInterval then
+                lastMacroTick = tick()
+                local dir = (math.random(0,1) == 0) and -1 or 1
+                local angle = math.rad(math.random(macroAngleMin, macroAngleMax) * dir)
+                rootPart.CFrame = rootPart.CFrame * CFrame.Angles(0, angle, 0)
+            end
+            if wallPush then
+                local pushDir = getSpeedDirection()
+                if pushDir.Magnitude > 0 then
+                    rootPart.AssemblyLinearVelocity += pushDir * wallPushPower
+                end
+            end
+        else
+            humanoid.AutoRotate = true
+        end
+    else
+        if humanoid and not macroSpinActive then
+            humanoid.AutoRotate = true
         end
     end
-end
+end)
 
--- Update all ESP colors (efficient, doesn't rebuild)
-local function updateAllESPColors()
-    for plr in pairs(espObjects) do
-        updateESPColor(plr)
-    end
-end
-
--- ============ AUTO-UPDATE EVENTS ============
-
--- Watch for role attribute changes
-local function watchRoleChanges(plr)
-    if plr == player then return end
-    plr:GetAttributeChangedSignal("Role"):Connect(function()
-        updateESPColor(plr)
+-- ============ HOLD MACRO SPIN ============
+local function startSpeedRamp()
+    if boostConnection then boostConnection:Disconnect() end
+    currentBoost = speedPower
+    
+    boostConnection = RunService.RenderStepped:Connect(function()
+        if not macroSpinActive then return end
+        if currentBoost < 1000 then
+            currentBoost = currentBoost + speedPower * 1.5
+        end
+        local state = humanoid and humanoid:GetState()
+        if state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall then
+            local dir = getSpeedDirection()
+            if dir.Magnitude > 0 then
+                rootPart.AssemblyLinearVelocity = rootPart.AssemblyLinearVelocity + dir * currentBoost
+            end
+        end
+        if humanoid then
+            humanoid.WalkSpeed = 16 + currentBoost
+        end
     end)
 end
 
--- Watch for gun pickup (Hero detection)
-local function watchToolChanges(plr)
-    if plr == player then return end
-    
-    local char = plr.Character
-    if not char then return end
-    
-    local function onToolAdded(tool)
-        if tool:IsA("Tool") and (tool.Name:lower():find("gun") or tool:FindFirstChild("GunServer")) then
-            task.wait(0.1)
-            updateESPColor(plr)
-        end
+local function stopSpeedRamp()
+    if boostConnection then
+        boostConnection:Disconnect()
+        boostConnection = nil
     end
-    
-    local function onToolRemoved(tool)
-        if tool:IsA("Tool") and (tool.Name:lower():find("gun") or tool:FindFirstChild("GunServer")) then
-            task.wait(0.1)
-            updateESPColor(plr)
-        end
+    currentBoost = 0
+    if humanoid then
+        humanoid.WalkSpeed = originalSpeed
     end
-    
-    char.ChildAdded:Connect(onToolAdded)
-    char.ChildRemoved:Connect(onToolRemoved)
 end
 
--- Watch for character respawn
-local function setupPlayerTracking(plr)
-    if plr == player then return end
+local function startSpin()
+    if macroSpinActive then return end
+    macroSpinActive = true
+    if humanoid then
+        originalSpeed = humanoid.WalkSpeed
+        humanoid.AutoRotate = false
+    end
+    startSpeedRamp()
     
-    -- Initial add
+    spinConnection = RunService.RenderStepped:Connect(function()
+        if not macroSpinActive then return end
+        if tick() - lastMacroTick > macroInterval then
+            lastMacroTick = tick()
+            local dir = (math.random(0,1) == 0) and -1 or 1
+            local angle = math.rad(math.random(macroAngleMin, macroAngleMax) * dir)
+            if rootPart then
+                rootPart.CFrame = rootPart.CFrame * CFrame.Angles(0, angle, 0)
+            end
+        end
+    end)
+    
+    WindUI:Notify({Title = "Macro Spin", Content = "ON", Duration = 1})
+end
+
+local function stopSpin()
+    if not macroSpinActive then return end
+    macroSpinActive = false
+    if spinConnection then spinConnection:Disconnect() spinConnection = nil end
+    stopSpeedRamp()
+    if humanoid then
+        humanoid.AutoRotate = true
+    end
+    lastMacroTick = 0
+end
+
+-- ============ JUMP BOOST ============
+local function doJumpBoost()
+    if not rootPart or not humanoid or humanoid.Health <= 0 then
+        WindUI:Notify({Title = "Error", Content = "Character not ready", Duration = 1})
+        return
+    end
+    
+    local now = tick()
+    if now - lastJump < jumpCooldown then
+        WindUI:Notify({Title = "Cooldown", Content = string.format("%.1f sec left", jumpCooldown - (now - lastJump)), Duration = 1})
+        return
+    end
+    
+    local g = 196.2
+    local velocity = math.sqrt(2 * g * jumpHeight)
+    rootPart.AssemblyLinearVelocity = Vector3.new(rootPart.AssemblyLinearVelocity.X, velocity, rootPart.AssemblyLinearVelocity.Z)
+    lastJump = now
+    
+    WindUI:Notify({Title = "Jump Boost", Content = "Height: " .. jumpHeight .. " blocks", Duration = 1})
+end
+
+-- ============ STOP CHARACTER (МГНОВЕННАЯ ОСТАНОВКА) ============
+local function stopCharacter()
+    if not rootPart or not humanoid then
+        WindUI:Notify({Title = "Error", Content = "Character not ready", Duration = 1})
+        return
+    end
+    
+    -- Полная остановка
+    rootPart.AssemblyLinearVelocity = Vector3.zero
+    rootPart.AssemblyAngularVelocity = Vector3.zero
+    rootPart.Velocity = Vector3.zero
+    
+    humanoid.WalkSpeed = 0
+    humanoid.JumpPower = 0
+    
+    -- Принудительное состояние
+    humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+    
+    -- Если макрос активен — выключаем
+    if macroSpinActive then
+        stopSpin()
+        if mcButton then mcButton.BackgroundColor3 = Color3.fromRGB(100, 100, 255) end
+    end
+    
+    WindUI:Notify({Title = "STOP", Content = "Character frozen", Duration = 1})
+    
+    -- Восстанавливаем через 0.5 секунды (чтобы не навсегда)
     task.wait(0.5)
-    if espEnabled and plr.Character and plr.Character:FindFirstChild("Humanoid") then
-        addESP(plr)
+    if humanoid and not macroSpinActive then
+        humanoid.WalkSpeed = 16
+        humanoid.JumpPower = 50
     end
+end
+
+-- ============ ФУНКЦИИ СКРЫТИЯ/ПОКАЗА КНОПОК ============
+local function setMCVisible(visible)
+    mcVisible = visible
+    if mcButton then mcButton.Visible = visible end
+end
+
+local function setJBVisible(visible)
+    jbVisible = visible
+    if jbButton then jbButton.Visible = visible end
+end
+
+local function setStopVisible(visible)
+    stopVisible = visible
+    if stopButton then stopButton.Visible = visible end
+end
+
+-- ============ СОЗДАНИЕ GUI КНОПОК ============
+local function createButtons()
+    if screenGui then screenGui:Destroy() end
     
-    -- Watch for respawn
-    plr.CharacterAdded:Connect(function(char)
-        task.wait(0.5)
-        if espEnabled then
-            -- Remove old and add new
-            removeESP(plr)
-            addESP(plr)
+    screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "MacroButton"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+    
+    -- MC Button
+    mcButton = Instance.new("TextButton")
+    mcButton.Name = "MCButton"
+    mcButton.Size = UDim2.new(0, 65, 0, 65)
+    mcButton.Position = savedMCPos
+    mcButton.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
+    mcButton.BackgroundTransparency = 0
+    mcButton.BorderSizePixel = 2
+    mcButton.BorderColor3 = Color3.fromRGB(255, 255, 255)
+    mcButton.Text = "MC"
+    mcButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    mcButton.TextScaled = true
+    mcButton.Font = Enum.Font.GothamBold
+    mcButton.Visible = mcVisible
+    mcButton.Parent = screenGui
+    
+    local mcCorner = Instance.new("UICorner")
+    mcCorner.CornerRadius = UDim.new(1, 0)
+    mcCorner.Parent = mcButton
+    
+    -- JB Button
+    jbButton = Instance.new("TextButton")
+    jbButton.Name = "JBButton"
+    jbButton.Size = UDim2.new(0, 65, 0, 65)
+    jbButton.Position = savedJBPos
+    jbButton.BackgroundColor3 = Color3.fromRGB(255, 100, 0)
+    jbButton.BackgroundTransparency = 0
+    jbButton.BorderSizePixel = 2
+    jbButton.BorderColor3 = Color3.fromRGB(255, 255, 255)
+    jbButton.Text = "JB"
+    jbButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    jbButton.TextScaled = true
+    jbButton.Font = Enum.Font.GothamBold
+    jbButton.Visible = jbVisible
+    jbButton.Parent = screenGui
+    
+    local jbCorner = Instance.new("UICorner")
+    jbCorner.CornerRadius = UDim.new(1, 0)
+    jbCorner.Parent = jbButton
+    
+    -- STOP Button
+    stopButton = Instance.new("TextButton")
+    stopButton.Name = "STOPButton"
+    stopButton.Size = UDim2.new(0, 65, 0, 65)
+    stopButton.Position = savedStopPos
+    stopButton.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+    stopButton.BackgroundTransparency = 0
+    stopButton.BorderSizePixel = 2
+    stopButton.BorderColor3 = Color3.fromRGB(255, 255, 255)
+    stopButton.Text = "STOP"
+    stopButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    stopButton.TextScaled = true
+    stopButton.Font = Enum.Font.GothamBold
+    stopButton.Visible = stopVisible
+    stopButton.Parent = screenGui
+    
+    local stopCorner = Instance.new("UICorner")
+    stopCorner.CornerRadius = UDim.new(1, 0)
+    stopCorner.Parent = stopButton
+    
+    -- Сохраняем позиции при перемещении
+    task.spawn(function()
+        while mcButton and jbButton and stopButton do
+            task.wait(0.5)
+            if mcButton then savedMCPos = mcButton.Position end
+            if jbButton then savedJBPos = jbButton.Position end
+            if stopButton then savedStopPos = stopButton.Position end
         end
-        watchToolChanges(plr)
     end)
     
-    -- Watch role changes
-    watchRoleChanges(plr)
+    -- ============ MC HOLD LOGIC ============
+    mcButton.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            if not editMode then
+                startSpin()
+                mcButton.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
+            end
+        end
+    end)
     
-    -- Watch tool changes on current character
-    watchToolChanges(plr)
-end
-
--- Track all players
-for _, plr in ipairs(Players:GetPlayers()) do
-    setupPlayerTracking(plr)
-end
-
-Players.PlayerAdded:Connect(function(plr)
-    setupPlayerTracking(plr)
-end)
-
-Players.PlayerRemoving:Connect(function(plr)
-    removeESP(plr)
-end)
-
--- Watch for round start (when roles are assigned)
-local function onRoundStart()
-    task.wait(1)
-    if espEnabled then
-        refreshAllESP()
-    end
-end
-
--- Detect round start via remotes or attribute
-local replicatedStorage = game:GetService("ReplicatedStorage")
-local roundStartRemote = replicatedStorage:FindFirstChild("RoundStarted") or
-                         replicatedStorage:FindFirstChild("StartRound") or
-                         replicatedStorage:FindFirstChild("RoundStart")
-
-if roundStartRemote then
-    roundStartRemote.OnClientEvent:Connect(onRoundStart)
-end
-
-player:GetAttributeChangedSignal("Role"):Connect(function()
-    if player:GetAttribute("Role") and player:GetAttribute("Role") ~= "" then
-        onRoundStart()
-    end
-end)
-
--- Periodic check for role changes (every 1 second, lightweight)
-task.spawn(function()
-    while true do
-        task.wait(1)
-        if espEnabled then
-            updateAllESPColors()
+    mcButton.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            if not editMode then
+                stopSpin()
+                mcButton.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
+            end
+        end
+    end)
+    
+    -- ============ JB CLICK LOGIC ============
+    jbButton.MouseButton1Click:Connect(function()
+        if not editMode then
+            doJumpBoost()
+            local originalColor = jbButton.BackgroundColor3
+            jbButton.BackgroundColor3 = Color3.fromRGB(255, 200, 0)
+            task.wait(0.1)
+            jbButton.BackgroundColor3 = originalColor
+        end
+    end)
+    
+    -- ============ STOP CLICK LOGIC ============
+    stopButton.MouseButton1Click:Connect(function()
+        if not editMode then
+            stopCharacter()
+            local originalColor = stopButton.BackgroundColor3
+            stopButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+            task.wait(0.2)
+            stopButton.BackgroundColor3 = originalColor
+        end
+    end)
+    
+    -- ============ DRAG LOGIC ============
+    local dragging = false
+    local dragStart = nil
+    local startPos = nil
+    local activeButton = nil
+    
+    local function beginDrag(btn, input)
+        if editMode then
+            dragging = true
+            activeButton = btn
+            dragStart = input.Position
+            startPos = btn.Position
+            btn.BackgroundColor3 = Color3.fromRGB(200, 100, 255)
         end
     end
-end)
+    
+    local function updateDrag(input)
+        if dragging and editMode and activeButton then
+            local delta = input.Position - dragStart
+            local newX = startPos.X.Offset + delta.X
+            local newY = startPos.Y.Offset + delta.Y
+            activeButton.Position = UDim2.new(0, newX, 0, newY)
+        end
+    end
+    
+    local function endDrag()
+        if dragging and editMode and activeButton then
+            dragging = false
+            if activeButton == mcButton then
+                mcButton.BackgroundColor3 = macroSpinActive and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(100, 100, 255)
+                savedMCPos = mcButton.Position
+            elseif activeButton == jbButton then
+                jbButton.BackgroundColor3 = Color3.fromRGB(255, 100, 0)
+                savedJBPos = jbButton.Position
+            elseif activeButton == stopButton then
+                stopButton.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+                savedStopPos = stopButton.Position
+            end
+            activeButton = nil
+        end
+    end
+    
+    mcButton.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            beginDrag(mcButton, input)
+        end
+    end)
+    
+    jbButton.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            beginDrag(jbButton, input)
+        end
+    end)
+    
+    stopButton.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            beginDrag(stopButton, input)
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            updateDrag(input)
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            endDrag()
+        end
+    end)
+end
+
+-- ============ ОБРАБОТКА РЕСПАВНА ============
+local function onCharacterAdded(newChar)
+    character = newChar
+    humanoid = newChar:WaitForChild("Humanoid")
+    rootPart = newChar:WaitForChild("HumanoidRootPart")
+    
+    if macroSpinActive then
+        stopSpin()
+        if mcButton then mcButton.BackgroundColor3 = Color3.fromRGB(100, 100, 255) end
+    end
+    
+    createButtons()
+end
+
+player.CharacterAdded:Connect(onCharacterAdded)
 
 -- ============ WINDUI MENU ============
 local Window = WindUI:CreateWindow({
-    Title = "MM2 ESP",
-    Author = "",
-    Folder = "mm2_esp",
-    Size = UDim2.fromOffset(350, 200),
+    Title = "Open source script",
+    Author = "DotaWasCorupted",
+    Folder = "wnw_glitch",
+    Size = UDim2.fromOffset(450, 650),
     Theme = "Dark"
 })
 
 local MainTab = Window:Tab({Title = "Main"})
+local MacroTab = Window:Tab({Title = "Macro"})
+local AngleTab = Window:Tab({Title = "Angle"})
+local DirectionTab = Window:Tab({Title = "Direction"})
+local WallTab = Window:Tab({Title = "Wall"})
+local ButtonTab = Window:Tab({Title = "Button"})
+
+-- MAIN TAB
+MainTab:Toggle({
+    Title = "Speed Glitch",
+    Description = "Enable speed boost in air",
+    Default = false,
+    Callback = function(v) speedEnabled = v end
+})
+
+MainTab:Slider({
+    Title = "Speed Power",
+    Description = "Boost power (1-30)",
+    Value = {Min = 1, Max = 30, Default = 3},
+    Step = 1,
+    Callback = function(v) speedPower = v end
+})
 
 MainTab:Toggle({
-    Title = "ESP Enabled",
-    Description = "Murderer = Red | Sheriff = Blue | Innocent = Green",
+    Title = "Jump Like Macros",
+    Description = "Auto rotation macro (requires Speed Glitch)",
     Default = false,
     Callback = function(v)
-        espEnabled = v
-        if v then
-            refreshAllESP()
-            WindUI:Notify({Title = "ESP", Content = "ON", Duration = 2})
+        if not speedEnabled then
+            WindUI:Notify({Title = "Error", Content = "Enable Speed Glitch first", Duration = 2})
+            return
+        end
+        macroRotEnabled = v
+    end
+})
+
+MainTab:Slider({
+    Title = "Jump Height",
+    Description = "JB jump height (10-200 blocks)",
+    Value = {Min = 10, Max = 200, Default = 50},
+    Step = 5,
+    Callback = function(v) jumpHeight = v end
+})
+
+MainTab:Slider({
+    Title = "Jump Cooldown",
+    Description = "Seconds between JB jumps",
+    Value = {Min = 0.5, Max = 5, Default = 1.5},
+    Step = 0.1,
+    Callback = function(v) jumpCooldown = v end
+})
+
+-- MACRO TAB
+MacroTab:Paragraph({
+    Title = "Macro Speed",
+    Content = "1 = 0.001s | 100 = 0.1s"
+})
+
+MacroTab:Slider({
+    Title = "Macro Speed",
+    Description = "Delay between rotations",
+    Value = {Min = 1, Max = 100, Default = 10},
+    Step = 1,
+    Callback = function(v) macroInterval = v / 1000 end
+})
+
+-- ANGLE TAB
+AngleTab:Paragraph({
+    Title = "Macro Angle Range",
+    Content = "Min/Max rotation angle in degrees"
+})
+
+AngleTab:Slider({
+    Title = "Angle Min",
+    Description = "Minimum rotation angle",
+    Value = {Min = 1, Max = 180, Default = 80},
+    Step = 1,
+    Callback = function(v)
+        macroAngleMin = v
+        if macroAngleMin > macroAngleMax then macroAngleMax = macroAngleMin end
+    end
+})
+
+AngleTab:Slider({
+    Title = "Angle Max",
+    Description = "Maximum rotation angle",
+    Value = {Min = 1, Max = 180, Default = 120},
+    Step = 1,
+    Callback = function(v)
+        macroAngleMax = v
+        if macroAngleMax < macroAngleMin then macroAngleMin = macroAngleMax end
+    end
+})
+
+-- DIRECTION TAB
+DirectionTab:Paragraph({
+    Title = "Direction Mode",
+    Content = "Joystick = WASD movement | Forced = fixed direction"
+})
+
+DirectionTab:Toggle({
+    Title = "Forced Direction",
+    Description = "Enable fixed direction mode",
+    Default = false,
+    Callback = function(v) forcedDirectionEnabled = v end
+})
+
+DirectionTab:Dropdown({
+    Title = "Direction",
+    Description = "Direction when Forced is ON",
+    Options = {"Forward", "Backward", "Left", "Right", "Forward Left", "Forward Right", "Backward Left", "Backward Right"},
+    Default = "Forward",
+    Callback = function(v) forcedDirection = v end
+})
+
+-- WALL TAB
+WallTab:Paragraph({
+    Title = "Wall Push",
+    Content = "Extra push when hitting walls"
+})
+
+WallTab:Toggle({
+    Title = "Wall Push",
+    Description = "Enable wall push",
+    Default = false,
+    Callback = function(v) wallPush = v end
+})
+
+WallTab:Slider({
+    Title = "Wall Push Power",
+    Description = "Push strength (1-50)",
+    Value = {Min = 1, Max = 50, Default = 12},
+    Step = 1,
+    Callback = function(v) wallPushPower = v / 10 end
+})
+
+-- BUTTON TAB
+ButtonTab:Paragraph({
+    Title = "Buttons (65x65)",
+    Content = "MC: HOLD = spin | JB: CLICK = jump | STOP: CLICK = freeze"
+})
+
+ButtonTab:Toggle({
+    Title = "Show MC Button",
+    Description = "Show/Hide MC button",
+    Default = true,
+    Callback = function(v) setMCVisible(v) end
+})
+
+ButtonTab:Toggle({
+    Title = "Show JB Button",
+    Description = "Show/Hide JB button",
+    Default = true,
+    Callback = function(v) setJBVisible(v) end
+})
+
+ButtonTab:Toggle({
+    Title = "Show STOP Button",
+    Description = "Show/Hide STOP button",
+    Default = true,
+    Callback = function(v) setStopVisible(v) end
+})
+
+ButtonTab:Toggle({
+    Title = "Edit Mode",
+    Description = "Enable to move buttons",
+    Default = false,
+    Callback = function(v)
+        editMode = v
+        if editMode then
+            WindUI:Notify({Title = "Edit Mode", Content = "Now you can move buttons", Duration = 2})
         else
-            for plr in pairs(espObjects) do
-                removeESP(plr)
-            end
-            WindUI:Notify({Title = "ESP", Content = "OFF", Duration = 1})
+            WindUI:Notify({Title = "Edit Mode", Content = "Buttons locked", Duration = 2})
         end
     end
 })
 
-print("MM2 ESP loaded | Colors: Murderer=Red, Sheriff=Blue, Innocent=Green, Hero=Yellow")
-WindUI:Notify({Title = "Ready", Content = "Enable ESP | Auto-updates", Duration = 3})
+ButtonTab:Button({
+    Title = "Reset Button Positions",
+    Description = "Move all buttons back to default",
+    Callback = function()
+        if mcButton then
+            mcButton.Position = UDim2.new(0.85, -65, 0.5, -32)
+            savedMCPos = mcButton.Position
+        end
+        if jbButton then
+            jbButton.Position = UDim2.new(0.85, -130, 0.5, -32)
+            savedJBPos = jbButton.Position
+        end
+        if stopButton then
+            stopButton.Position = UDim2.new(0.85, -195, 0.5, -32)
+            savedStopPos = stopButton.Position
+        end
+        WindUI:Notify({Title = "Reset", Content = "Buttons moved to default positions", Duration = 2})
+    end
+})
+
+-- ============ ЗАПУСК ============
+createButtons()
+print("Script loaded: MC + JB + STOP | Separate Show/Hide for each button")
+WindUI:Notify({Title = "Ready", Content = "MC = hold | JB = jump | STOP = freeze", Duration = 3})
